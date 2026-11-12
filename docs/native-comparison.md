@@ -2,7 +2,7 @@
 
 `herdr-pane` 是第三方操作捷徑。Herdr 本身已經提供多機連線、跨機 agent 總覽、session 持續執行與單一終端 attach。本工具沒有實作新的遠端存取協定、使用者授權或共享 server。
 
-本比較以 Herdr 0.9.5 官方文件與 `herdr-pane` 0.1.0 的實作為準。
+本比較以 Herdr 0.9.5 官方文件與 `herdr-pane` 0.2.0 的實作為準。
 
 ## 哪些原本就有
 
@@ -13,7 +13,7 @@
 | 切到另一台機器的工作 | 側欄與跨機 workspace 導覽 | 不切換整個視窗，將單一終端接進目前 pane |
 | 單一遠端終端 attach | 原生 direct attach，加上 SSH | 查詢目標並組合 SSH／session 參數，連線前再核對 |
 | 新增遠端 | machine add；0.9.5 可探索執行中的 session | 詢問位置與 session 的簡單包裝 |
-| 移除、停用、重新啟用 | 原生 machine remove／disable／enable | 沿用原生命令，不重做管理介面 |
+| 移除、停用、重新啟用 | 原生 machine remove／disable／enable | 移除提供選號、確認與前後核對；停用／啟用沿用原生命令 |
 | 分享同一個 session | 原生 Herdr 與既有 SSH 存取 | 沒有新增存取權或邀請機制 |
 | 斷線恢復與持續更新 | 完整 client 提供重連、狀態與通知 | 清單手動刷新；direct attach 不自動重連 |
 

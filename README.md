@@ -6,7 +6,7 @@
 
 **Herdr 本身已有跨機 agent 清單、遠端連線與 session 共享。** 本工具補的是「在目前 pane 選號、直接接上單一 agent」的操作流程，沒有新增 SSH 權限或多人協作協定；也不是 Herdr 官方專案。
 
-> **版本：0.1.0，供試用。** 程式可執行，29 項自動測試通過，已在 macOS 驗證本機／遠端清單與 SSH attach／detach。Linux、正式 staging、新帳號與 MFA 全流程尚未實測。
+> **版本：0.2.0，供試用。** 程式可執行，40 項自動測試通過，已在 macOS 驗證本機／遠端清單與 SSH attach／detach。Linux、正式 staging、新帳號與 MFA 全流程尚未實測。
 
 ![herdr-pane 操作總覽：收集 agent、選號、接上原終端](docs/diagrams/svg/00-overview.svg)
 
@@ -84,7 +84,17 @@ herdr-pane --add-remote build-box --remote-session review
 
 ## 移除或停用遠端
 
-使用 Herdr 原生命令，將 `PROFILE_ID` 換成清單中的 `id`：
+直接用本工具選號移除，或帶入已知的 profile ID：
+
+```sh
+herdr-pane --remove-remote
+herdr-pane --remove-remote PROFILE_ID
+herdr-pane -h
+```
+
+移除清單包含已停用的 profile。選取後顯示 ID、主機與 session，輸入 `yes` 才執行；Enter 取消。移除前再次核對設定，完成後確認 ID 已從清單消失，然後結束程式。這會讓本機 Herdr client 與該遠端斷線，遠端 session／agent 繼續執行；恢復連線需重新新增。
+
+暫時停用、重新啟用或直接使用原生命令，將 `PROFILE_ID` 換成清單中的 `id`：
 
 ```sh
 herdr machine list --json
@@ -121,7 +131,7 @@ herdr machine remove PROFILE_ID   # 移除這筆儲存的連線
 python3 -m unittest discover -s tests -v
 ```
 
-29 項測試涵蓋多來源清單、設定／目標變更、逾時與取消、參數及顯示文字處理、選單快照與新增遠端委派。SSH 連線與正常 detach 另以隔離終端實測。完整範圍與未測項目見 [驗證紀錄](docs/document-review.md)。
+40 項測試涵蓋多來源清單、設定／目標變更、逾時與取消、參數及顯示文字處理、選單快照、新增遠端委派，以及移除確認／取消、設定變更與結果核對。SSH 連線與正常 detach 另以隔離終端實測。完整範圍與未測項目見 [驗證紀錄](docs/document-review.md)。
 
 ## New components
 

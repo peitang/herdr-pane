@@ -329,6 +329,114 @@ class SelectorTests(unittest.TestCase):
             self.assertIn("--add-remote", output.getvalue())
 
 
+class RemoteRemovalTests(unittest.TestCase):
+    def execute(self, snapshots, answers, args=None, native_exit=0, tty=True):
+        snapshots = iter(snapshots)
+        calls = []
+        output = Tty()
+        def query(argv):
+            if argv != ["machine", "list", "--json"]:
+                raise AssertionError("Removal must not query or connect to an agent")
+            result = next(snapshots)
+            if isinstance(result, Exception):
+                raise result
+            return result
+        def run(argv):
+            calls.append(argv)
+            return native_exit
+        with patch.object(app, "find_herdr", return_value="/tools/herdr"), \
+             patch.object(app, "QueryRunner", return_value=query), \
+             patch.object(sys, "stdin", Tty() if tty else io.StringIO()), \
+             patch.object(sys, "stdout", output), patch.object(sys, "stderr", output), \
+             patch("builtins.input", side_effect=answers), \
+             patch.object(app, "interactive_run", side_effect=run):
+            try:
+                result = app.main(args or ["--remove-remote"])
+            except SystemExit as error:
+                self.fail("Removal option must reach the workflow, not argparse exit {}".format(error.code))
+        return result, calls, output.getvalue()
+
+    def test_confirmed_selection_removes_disabled_broken_target_by_id(self):
+        chosen = profile(enabled=False, target="unsupported target", label="build-box\x1b[31m")
+        other = profile(id="profile_b", label="other-box")
+        code, calls, output = self.execute(
+            [[chosen, other], [other, chosen], [other]], ["bad", "999", "1", "yes"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [["/tools/herdr", "machine", "remove", "profile_a"]])
+        self.assertIn("停用", output)
+        self.assertNotIn("\x1b", output)
+
+    def test_explicit_id_does_not_need_a_number_selection(self):
+        code, calls, _ = self.execute(
+            [[profile()], [profile()], []], ["yes"], ["--remove-remote", "profile_a"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [["/tools/herdr", "machine", "remove", "profile_a"]])
+
+    def test_cancelling_number_or_confirmation_never_mutates(self):
+        for answers in ([""], ["1", ""], ["1", "no"]):
+            with self.subTest(answers=answers):
+                code, calls, _ = self.execute([[profile()]], answers)
+                self.assertEqual(code, 0)
+                self.assertEqual(calls, [])
+
+    def test_empty_saved_list_exits_without_mutation(self):
+        code, calls, _ = self.execute([[]], [])
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [])
+
+    def test_missing_id_or_label_cannot_remove_another_profile(self):
+        for requested in ("missing", "build-box", "--bad", "profile_a;echo"):
+            with self.subTest(requested=requested):
+                code, calls, _ = self.execute(
+                    [[profile()]], [], ["--remove-remote=" + requested],
+                )
+                self.assertEqual(code, 1)
+                self.assertEqual(calls, [])
+
+    def test_changed_or_missing_profile_after_confirmation_is_not_removed(self):
+        for current in ([], [profile(session="changed")], [profile(enabled=False)],
+                        [profile(target="other-box")], [profile(label="renamed")]):
+            with self.subTest(current=current):
+                code, calls, _ = self.execute([[profile()], current], ["1", "yes"])
+                self.assertEqual(code, 1)
+                self.assertEqual(calls, [])
+
+    def test_native_failure_is_not_reported_as_success(self):
+        code, calls, output = self.execute([[profile()], [profile()]], ["1", "yes"], native_exit=3)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("已移除", output)
+
+    def test_unverified_removal_is_not_reported_as_success(self):
+        for after in ([profile()], app.PaneError("query unavailable")):
+            with self.subTest(after=after):
+                code, calls, output = self.execute([[profile()], [profile()], after], ["1", "yes"])
+                self.assertEqual(code, 1)
+                self.assertEqual(len(calls), 1)
+                self.assertNotIn("已移除", output)
+
+    def test_malformed_or_duplicate_saved_ids_never_mutate(self):
+        for snapshot in ({}, [None], [profile(id="-option")], [profile(), profile()]):
+            with self.subTest(snapshot=snapshot):
+                code, calls, _ = self.execute([snapshot], [])
+                self.assertEqual(code, 1)
+                self.assertEqual(calls, [])
+
+    def test_noninteractive_removal_is_refused(self):
+        code, calls, _ = self.execute([], [], tty=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, [])
+
+    def test_remove_conflicts_with_other_modes_before_running_herdr(self):
+        for flags in (["--list"], ["--add-remote"], ["--remote-session", "review"], ["--remote-session", ""]):
+            with self.subTest(flags=flags), patch.object(sys, "stderr", io.StringIO()), \
+                 self.assertRaises(SystemExit) as raised:
+                app.main(["--remove-remote", *flags])
+            self.assertEqual(raised.exception.code, 2)
+
+
 class Tty(io.StringIO):
     def isatty(self):
         return True

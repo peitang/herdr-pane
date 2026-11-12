@@ -373,6 +373,77 @@ def add_remote(target, session, herdr, run):
     return run([herdr, "machine", "add", target, "--remote-session", session])
 
 
+def saved_profiles(query):
+    """Read removable profiles, including disabled or unsupported SSH targets."""
+    data = query(["machine", "list", "--json"])
+    if not isinstance(data, list):
+        raise PaneError("機器清單不是預期的 JSON 陣列")
+    profiles, seen = [], set()
+    for item in data:
+        if not isinstance(item, dict):
+            raise PaneError("機器清單含無效項目")
+        profile_id = validate_identifier(item.get("id"))
+        if profile_id in seen:
+            raise PaneError("機器清單含重複識別碼，無法安全移除")
+        seen.add(profile_id)
+        profiles.append({key: item.get(key) for key in (
+            "id", "label", "target", "session", "enabled",
+        )})
+    return sorted(profiles, key=lambda item: (str(item["label"] or ""), item["id"]))
+
+
+def remove_remote(profile_id, herdr, query, run):
+    if profile_id:
+        validate_identifier(profile_id)
+    profiles = saved_profiles(query)
+    if profile_id:
+        selected = next((item for item in profiles if item["id"] == profile_id), None)
+        if selected is None:
+            raise PaneError("找不到此 PROFILE_ID；請用 --remove-remote 選號，不接受主機標籤")
+    else:
+        if not profiles:
+            print("沒有儲存的遠端連線。")
+            return 0
+        print("\n可移除的遠端連線（包含已停用）：")
+        for index, item in enumerate(profiles, 1):
+            print("{:>3}  {}  |  {}  |  {} / {}".format(
+                index, item["id"], display_text(item["label"]),
+                display_text(item["target"]), display_text(item["session"]),
+            ))
+        while True:
+            try:
+                index = selection_index(input("選擇要移除的編號，Enter 取消："), len(profiles))
+                break
+            except PaneError as error:
+                print(error)
+        if index is None:
+            return 0
+        selected = profiles[index]
+    state = "啟用" if selected["enabled"] is True else "停用" if selected["enabled"] is False else "未知"
+    print("\n移除 {} | {} | {} / {} [{}]".format(
+        selected["id"], display_text(selected["label"]), display_text(selected["target"]),
+        display_text(selected["session"]), state,
+    ))
+    print("只移除本機儲存的連線；本機 Herdr client 會與它斷線，遠端 session／agent 繼續執行。")
+    print("之後需重新新增連線；暫時停用可用 herdr machine disable " + selected["id"])
+    if input("確認移除？輸入 yes 確認，Enter 取消：").strip().lower() != "yes":
+        print("已取消。")
+        return 0
+    if selected not in saved_profiles(query):
+        raise PaneError("遠端設定已變更或刪除，請重新執行 --remove-remote 核對")
+    result = run([herdr, "machine", "remove", selected["id"]])
+    if result:
+        raise PaneError("移除命令失敗（exit {}）；請檢查原生訊息".format(result))
+    try:
+        remaining = saved_profiles(query)
+    except PaneError as error:
+        raise PaneError("移除命令已執行，但無法確認結果；請用 herdr machine list --json 檢查") from error
+    if any(item["id"] == selected["id"] for item in remaining):
+        raise PaneError("移除後仍有此 PROFILE_ID；請用 herdr machine list --json 檢查")
+    print("已移除連線 " + selected["id"] + "；遠端 session／agent 不受影響。")
+    return 0
+
+
 def selection_index(text, count):
     text = text.strip()
     if not text:
@@ -413,24 +484,36 @@ def interactive_run(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="herdr-pane", description="列出本機與已設定遠端的 agent，選號接上原終端。")
-    parser.add_argument("-l", "--list", action="store_true", help="只列清單，不接上終端")
-    parser.add_argument("--add-remote", nargs="?", const="", metavar="SSH_TARGET", help="引導新增遠端後返回選單")
+    parser = argparse.ArgumentParser(
+        prog="herdr-pane", description="列出本機與已設定遠端的 agent，選號接上原終端。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="遠端管理：\n  herdr-pane --remove-remote             選號並確認移除連線\n"
+               "  herdr machine list --json              查詢 PROFILE_ID\n"
+               "  herdr machine disable PROFILE_ID       暫時停用\n"
+               "  herdr machine enable PROFILE_ID        重新啟用\n"
+               "  herdr machine remove PROFILE_ID        原生移除指令\n"
+               "移除或停用連線不會停止遠端 session／agent。",
+    )
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("-l", "--list", action="store_true", help="只列清單，不接上終端")
+    modes.add_argument("--add-remote", nargs="?", const="", metavar="SSH_TARGET", help="引導新增遠端後返回選單")
+    modes.add_argument("--remove-remote", nargs="?", const="", metavar="PROFILE_ID", help="選號或指定 ID，確認後移除儲存的遠端連線")
     parser.add_argument("--remote-session", help="新增遠端時明確指定 session；未提供時詢問")
     parser.add_argument("--timeout", type=float, default=10, help="每個查詢的期限秒數（預設 10）")
-    parser.add_argument("--version", action="version", version="herdr-pane 0.1.0")
+    parser.add_argument("--version", action="version", version="herdr-pane 0.2.0")
     args = parser.parse_args(argv)
     if not 0.1 <= args.timeout <= 120:
         parser.error("--timeout 必須介於 0.1 與 120 秒")
-    if args.remote_session and args.add_remote is None:
+    if args.remote_session is not None and args.add_remote is None:
         parser.error("--remote-session 必須配合 --add-remote")
-    if args.list and args.add_remote is not None:
-        parser.error("--list 不能與 --add-remote 同時使用")
     query = None
     try:
         herdr = find_herdr()
         if not args.list and not (sys.stdin.isatty() and sys.stdout.isatty()):
             raise PaneError("請在互動終端執行；只看清單可使用 --list")
+        if args.remove_remote is not None:
+            query = QueryRunner(herdr, args.timeout)
+            return remove_remote(args.remove_remote, herdr, query, interactive_run)
         if args.add_remote is not None:
             target = args.add_remote or input("SSH 別名或 user@host（Enter 取消）：").strip()
             if not target:

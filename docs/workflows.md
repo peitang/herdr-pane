@@ -1,6 +1,6 @@
 # 操作流程
 
-> 0.1.0 操作流程。圖表說明行為；測試涵蓋範圍另見 [驗證紀錄](document-review.md)。
+> 0.2.0 操作流程。圖表說明行為；測試涵蓋範圍另見 [驗證紀錄](document-review.md)。
 
 ## 1. 日常使用：啟動、選號、接上
 
@@ -100,3 +100,9 @@ Herdr 文件描述的 detach 操作是 `Ctrl+B` 後按 `Q`。若在另一層 Her
 
 - [Herdr agent、session 與多 client 的定義](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.1/docs/next/website/src/content/docs/concepts.mdx)
 - [Direct attach 與 detach 的原生行為](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.1/docs/next/website/src/content/docs/persistence-remote.mdx)
+
+## 移除儲存的遠端連線
+
+`herdr-pane --remove-remote` → 列出全部儲存的 profile（包含停用）→ 選號 → 顯示目標與影響 → 輸入 `yes` → 重新核對設定 → 原生 `machine remove` → 確認 ID 已消失 → 結束。
+
+也可用 `--remove-remote PROFILE_ID` 省略選號；兩種方式都要確認。Enter 取消，設定中途改變就停止，移除失敗不顯示成功。操作只查本機儲存的 profile，不需要連上遠端；本機 client 會與該連線斷開，遠端 session 與 agent 保留。暫時隱藏請用 `herdr machine disable PROFILE_ID`。

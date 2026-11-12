@@ -2,7 +2,7 @@
 
 ## 已實作範圍
 
-`herdr_pane.py` 提供本機目前 session 與已啟用遠端的 agent 清單、同次選單選號、連線前 profile／terminal 核對、SSH 直接終端連線，以及 `--add-remote` 原生設定引導。只有正式指令 `herdr-pane`，不建立舊名稱。
+`herdr_pane.py` 提供本機目前 session 與已啟用遠端的 agent 清單、同次選單選號、連線前 profile／terminal 核對、SSH 直接終端連線，以及 `--add-remote` 原生設定引導、`--remove-remote` 選號確認移除。只有正式指令 `herdr-pane`，不建立舊名稱。
 
 ## 自動測試
 
@@ -10,7 +10,7 @@
 python3 -m unittest discover -s tests -v
 ```
 
-目前 29 項測試通過，涵蓋：
+目前 40 項測試通過，涵蓋：
 
 - 本機／遠端合併、停用 profile、來源失敗隔離、同名與同 pane 識別碼。
 - 設定變更、agent 消失或 terminal ID 被替換時拒絕連線。
@@ -19,6 +19,10 @@ python3 -m unittest discover -s tests -v
 - 程序祖先身分核對，不採用 UI 焦點或繼承 pane ID。
 - 選單快照、非法編號、失敗後返回選單且不自動重試。
 - 新增遠端委派原生命令並重新取得清單，以及空清單與全部來源失敗的結束碼。
+
+- 遠端移除：停用／格式不支援的 profile、指定 ID、取消、設定改變、原生失敗、移除後結果核對、非互動拒絕與參數互斥。
+
+移除流程以虛構 profile 與原生 CLI 邊界替身驗證；沒有為測試刪除使用者的真實連線。
 
 這些測試不會連接真實主機；外部 CLI 邊界使用虛構資料，逾時測試使用測試自己建立的子程序。
 

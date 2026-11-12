@@ -59,9 +59,15 @@ Direct attach 使用 `Ctrl+B` 後按 `Q`，與完整 Herdr UI 的自訂前綴可
 ## 移除或停用遠端
 
 ```sh
-herdr machine list --json
-herdr machine remove PROFILE_ID
+herdr-pane --remove-remote             # 選號後確認
+herdr-pane --remove-remote PROFILE_ID  # 指定 ID 後確認
 ```
+
+0.2.0 起 `herdr-pane -h` 會列出這些入口。若看不到，先用 `herdr-pane --version` 檢查版本，再依 README 更新安裝；shell 可用 `command -v herdr-pane` 確認執行位置。
+
+移除時不接受主機標籤代替 ID；需要 ID 可用 `herdr machine list --json`。若提示設定已變更，重新執行選單核對。若移除命令已執行但結果無法確認，先查原生清單，不要將它當成已成功或未成功。
+
+也可直接使用 `herdr machine remove PROFILE_ID`。
 
 只想暫時隱藏時用 `herdr machine disable PROFILE_ID`，之後用 `herdr machine enable PROFILE_ID` 恢復。這些操作不停止遠端 session；重新啟動選單或按 `r` 反映變更。
 
