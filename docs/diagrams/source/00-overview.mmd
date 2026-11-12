@@ -1,0 +1,25 @@
+---
+title: herdr-pane · 一張清單，接上所有工作
+---
+flowchart TB
+    accTitle: herdr-pane 操作總覽
+    accDescr: 本機與已設定遠端的 agent 匯入一張清單，使用者選號後接上原終端。沒有遠端時可執行新增遠端引導。
+    subgraph SOURCES[01 · 工作來源]
+        direction LR
+        LOCAL["本機 agent"]
+        REMOTE["已設定的遠端 agent"]
+    end
+    MENU["02 · 同一張清單\n主機 · 名稱\n狀態 · 目錄"]
+    PICK["03 · 輸入編號\n再次確認連線目標"]
+    CONNECT["04 · 接上原終端\n繼續同一份工作"]
+    ADD["第一次設定遠端？\nherdr-pane --add-remote"]
+    LOCAL --> MENU
+    REMOTE --> MENU
+    MENU --> PICK --> CONNECT
+    ADD -. 原生引導完成後 .-> REMOTE
+    classDef action fill:#eff6ff,stroke:#5b8def,color:#16324f,stroke-width:2px;
+    classDef success fill:#e6f7f2,stroke:#229c83,color:#125c4d,stroke-width:2px;
+    classDef hint fill:#fff7e6,stroke:#d9a441,color:#78551b,stroke-width:1.5px;
+    class LOCAL,REMOTE,MENU,PICK action;
+    class CONNECT success;
+    class ADD hint;

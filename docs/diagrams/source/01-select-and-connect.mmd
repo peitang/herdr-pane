@@ -1,0 +1,47 @@
+---
+title: 01 · 選號連線
+---
+flowchart TB
+    accTitle: 列出 agent、選號與連線流程
+    accDescr: 先確認工具，再收集本機和遠端。來源失敗只影響該來源，清單固定後才選號；核對目標後接上。
+    START(["執行 herdr-pane"])
+    CHECK{"必要工具與\n終端環境可用？"}
+    FIX["顯示缺少項目\n處理後重新啟動"]
+    subgraph DISCOVERY[收集來源 · 每台遠端有查詢期限]
+        direction LR
+        LOCAL["查詢本機 agent"]
+        REMOTE["查詢已啟用遠端\n離線來源標示原因"]
+    end
+    SNAPSHOT["建立當次清單\n固定編號 · 才開放選取"]
+    EMPTY{"有可用 agent？"}
+    NONE["顯示空清單\n刷新或新增遠端"]
+    RETURN(["返回選單／新增遠端\n或離開"])
+    PICK["輸入編號\n空白 Enter 可取消"]
+    VERIFY{"目標仍存在\n且身分相同？"}
+    REFRESH(["提示清單已變動\n返回收集來源步驟"])
+    ROUTE{"本機或遠端？"}
+    ATTACH_LOCAL["指定本機 session\n接上已核對終端"]
+    ATTACH_REMOTE["沿用同一個 profile\n透過 SSH 接上終端"]
+    ATTACHED{"終端連線成功？"}
+    FAILURE["顯示失敗或占用原因\n不自動接管"]
+    CONNECTED(["繼續原本的 agent 工作"])
+    START --> CHECK
+    CHECK -- 否 --> FIX
+    CHECK -- 是 --> LOCAL & REMOTE
+    LOCAL & REMOTE --> SNAPSHOT --> EMPTY
+    EMPTY -- 否 --> NONE --> RETURN
+    EMPTY -- 是 --> PICK --> VERIFY
+    VERIFY -- 否 --> REFRESH
+    VERIFY -- 是 --> ROUTE
+    ROUTE -- 本機 --> ATTACH_LOCAL --> ATTACHED
+    ROUTE -- 遠端 --> ATTACH_REMOTE --> ATTACHED
+    ATTACHED -- 是 --> CONNECTED
+    ATTACHED -- 否 --> FAILURE --> RETURN
+    classDef action fill:#eff6ff,stroke:#5b8def,color:#16324f,stroke-width:1.5px;
+    classDef decision fill:#fff7e6,stroke:#d9a441,color:#78551b,stroke-width:1.5px;
+    classDef success fill:#e6f7f2,stroke:#229c83,color:#125c4d,stroke-width:2px;
+    classDef problem fill:#fff1f2,stroke:#df8590,color:#873a46,stroke-width:1.5px;
+    class START,LOCAL,REMOTE,SNAPSHOT,PICK,ATTACH_LOCAL,ATTACH_REMOTE action;
+    class CHECK,EMPTY,VERIFY,ROUTE,ATTACHED decision;
+    class FIX,NONE,REFRESH,FAILURE problem;
+    class CONNECTED,RETURN success;

@@ -1,0 +1,23 @@
+# Credentials and environment-specific data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+known_hosts*
+authorized_keys*
+.ssh/
+.secrets/
+
+# Local tooling and session artifacts
+.DS_Store
+node_modules/
+__pycache__/
+*.log
+*.tmp
+*.bak
+.local/
+session*.json
+screenshots/

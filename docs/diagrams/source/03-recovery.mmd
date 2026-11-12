@@ -1,0 +1,35 @@
+---
+title: 03 · 離開與重新連線
+---
+flowchart TB
+    accTitle: 正常離開、接管與連線異常的處理
+    accDescr: 第一版以手動重新選號為基準。正常離開或被接管不自動重連，網路或驗證問題回到選單處理，不停止遠端工作。
+    EVENT(["連線結束或失敗"])
+    KIND{"發生什麼情況？"}
+    NORMAL["正常 detach\n結束本次連線"]
+    TAKEN["被其他人 takeover\n不重連、不搶回"]
+    TARGET["目標已結束／被占用\n不改接其他 agent"]
+    NETWORK["網路或驗證問題\n顯示原因與處理方向"]
+    END(["離開或返回選單\n不主動停止遠端工作"])
+    MENU["重新查詢 agent 清單\n使用者手動再選編號"]
+    VERIFY{"原目標仍可確認\n且可接上？"}
+    ATTACH(["接上同一個終端\n繼續工作"])
+    EXPLAIN(["顯示失效或占用原因\n回到選單"])
+    EVENT --> KIND
+    KIND -- 使用者離開 --> NORMAL --> END
+    KIND -- 操作權已交接 --> TAKEN --> END
+    KIND -- 目標狀態變動 --> TARGET --> MENU
+    KIND -- 連線異常 --> NETWORK --> MENU
+    MENU --> VERIFY
+    VERIFY -- 是 --> ATTACH
+    VERIFY -- 否 --> EXPLAIN
+    classDef action fill:#eff6ff,stroke:#5b8def,color:#16324f,stroke-width:1.5px;
+    classDef decision fill:#fff7e6,stroke:#d9a441,color:#78551b,stroke-width:1.5px;
+    classDef success fill:#e6f7f2,stroke:#229c83,color:#125c4d,stroke-width:2px;
+    classDef problem fill:#fff1f2,stroke:#df8590,color:#873a46,stroke-width:1.5px;
+    classDef neutral fill:#f1f5f9,stroke:#94a3b8,color:#475569,stroke-width:1.5px;
+    class EVENT,NETWORK,MENU action;
+    class KIND,VERIFY decision;
+    class TAKEN,TARGET,EXPLAIN problem;
+    class NORMAL,END neutral;
+    class ATTACH success;

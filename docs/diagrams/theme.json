@@ -1,0 +1,27 @@
+{
+    "theme": "base",
+    "htmlLabels": false,
+    "themeVariables": {
+        "fontFamily": "PingFang TC, Noto Sans TC, Microsoft JhengHei, Arial, sans-serif",
+        "fontSize": "18px",
+        "primaryColor": "#eff6ff",
+        "primaryTextColor": "#16324f",
+        "primaryBorderColor": "#5b8def",
+        "lineColor": "#64748b",
+        "secondaryColor": "#ecfdf5",
+        "tertiaryColor": "#f8fafc",
+        "clusterBkg": "#ffffff",
+        "clusterBorder": "#dbe4ef",
+        "edgeLabelBackground": "#f8fafc",
+        "titleColor": "#0f172a"
+    },
+    "flowchart": {
+        "htmlLabels": false,
+        "curve": "basis",
+        "nodeSpacing": 38,
+        "rankSpacing": 58,
+        "padding": 22,
+        "useMaxWidth": true
+    },
+    "themeCSS": ".node rect { rx: 14px; ry: 14px; } .node polygon { stroke-width: 1.6px; } .flowchart-link { stroke-width: 1.7px; } .flowchartTitleText { font-size: 28px !important; font-weight: 700; } .cluster rect { rx: 20px; ry: 20px; } .cluster-label { font-weight: 700; }"
+}

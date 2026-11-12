@@ -1,0 +1,33 @@
+---
+title: 02 · 第一次新增遠端
+---
+flowchart TB
+    accTitle: 新增遠端的互動引導
+    accDescr: 提供 SSH 位置後交給 Herdr 原生設定，保留驗證與安裝詢問，成功才讀取 profile 並回到選單。
+    START(["herdr-pane --add-remote"])
+    TARGET["輸入或帶入 SSH 位置\n別名 / developer@host"]
+    VALID{"輸入格式有效？"}
+    RETRY["指出輸入問題\n重新輸入或取消"]
+    NATIVE["啟動 Herdr 原生引導\nherdr machine add"]
+    SSH["完成 SSH 驗證\n核對主機身分"]
+    SESSION["確認遠端 session\n依版本互動或明確指定"]
+    PROMPTS["安裝或相容性詢問\n原生流程可能啟動 server"]
+    RESULT{"原生設定成功？"}
+    SAVE["重新讀取儲存的 profile\n確認 target 與 session"]
+    MENU(["返回 agent 選單\n選編號即可接上"])
+    CANCEL["顯示取消或失敗原因\n保留原有可用來源"]
+    NOTE["遇到停止／替換執行中 server\n未安排維護時取消"]
+    START --> TARGET --> VALID
+    VALID -- 否 --> RETRY
+    VALID -- 是 --> NATIVE --> SSH --> SESSION --> PROMPTS --> RESULT
+    PROMPTS -. 注意 .-> NOTE
+    RESULT -- 是 --> SAVE --> MENU
+    RESULT -- 取消或失敗 --> CANCEL --> MENU
+    classDef action fill:#eff6ff,stroke:#5b8def,color:#16324f,stroke-width:1.5px;
+    classDef decision fill:#fff7e6,stroke:#d9a441,color:#78551b,stroke-width:1.5px;
+    classDef success fill:#e6f7f2,stroke:#229c83,color:#125c4d,stroke-width:2px;
+    classDef neutral fill:#f1f5f9,stroke:#94a3b8,color:#475569,stroke-width:1.5px;
+    class START,TARGET,NATIVE,SSH,SESSION,SAVE action;
+    class VALID,RESULT,PROMPTS,NOTE decision;
+    class MENU success;
+    class RETRY,CANCEL neutral;
