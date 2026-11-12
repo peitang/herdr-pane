@@ -57,6 +57,8 @@ python3 -m unittest discover -s tests -v
 - 發布前另核對修正後全部檔案、實際 commit、作者欄位與交付 bundle；上傳後核對遠端 tree。檢查紀錄不能代替這些發布步驟。
 - 四張 SVG 附 Mermaid 原稿；修改過的圖表會重新產生並檢視。SVG 不使用 foreignObject、外部圖片或 script。
 
+公開版本另補齊安裝／更新／移除、疑難排解、與原生功能的比較及 MIT 授權。內部實作計畫已從最新版移除，但歷史仍在審查範圍。效率說明只列省去的手動步驟，沒有宣稱經過操作計時；原生多機能力與本工具的操作捷徑分別說明。
+
 工具來源：[Gitleaks 8.30.1 官方 release](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1)。工具使用前已核對官方 checksum。
 
 ## 尚未驗證的環境與限制
