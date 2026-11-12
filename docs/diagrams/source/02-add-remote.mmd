@@ -7,10 +7,10 @@ flowchart TB
     START(["herdr-pane --add-remote"])
     TARGET["輸入或帶入 SSH 位置\n別名 / developer@host"]
     VALID{"輸入格式有效？"}
-    RETRY["指出輸入問題\n重新輸入或取消"]
+    RETRY["指出輸入問題\n退出後修正參數"]
     NATIVE["啟動 Herdr 原生引導\nherdr machine add"]
     SSH["完成 SSH 驗證\n核對主機身分"]
-    SESSION["確認遠端 session\n依版本互動或明確指定"]
+    SESSION["確認遠端 session\n輸入名稱或使用 default"]
     PROMPTS["安裝或相容性詢問\n原生流程可能啟動 server"]
     RESULT{"原生設定成功？"}
     SAVE["重新讀取儲存的 profile\n確認 target 與 session"]
@@ -19,7 +19,7 @@ flowchart TB
     NOTE["遇到停止／替換執行中 server\n未安排維護時取消"]
     START --> TARGET --> VALID
     VALID -- 否 --> RETRY
-    VALID -- 是 --> NATIVE --> SSH --> SESSION --> PROMPTS --> RESULT
+    VALID -- 是 --> SESSION --> NATIVE --> SSH --> PROMPTS --> RESULT
     PROMPTS -. 注意 .-> NOTE
     RESULT -- 是 --> SAVE --> MENU
     RESULT -- 取消或失敗 --> CANCEL --> MENU

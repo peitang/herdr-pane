@@ -4,16 +4,32 @@
 
 把本機與已設定遠端的 agent 放在同一個選單。看見主機、名稱與狀態，輸入編號，就接上原本的工作終端。
 
-> **目前狀態：設計文件，尚未提供可執行工具。**
-> 本 repository 整理已討論的使用流程、圖表與驗收條件。以下 `herdr-pane` 指令是預定介面，並非已發布功能。所有主機、帳號、路徑與畫面範例均為虛構資料。
+> **目前狀態：0.1.0 可執行版本。**
+> 已提供本機／遠端 agent 清單、當次選號連線與原生遠端設定引導。範例全部使用虛構資料；實測範圍與尚待驗證項目見 [驗證紀錄](docs/document-review.md)。
 
 ![herdr-pane：從本機與遠端收集 agent，選號後接上原終端](docs/diagrams/svg/00-overview.svg)
 
-## 預定使用方式
+## 安裝
+
+需要 Python 3.9 以上、Herdr 與 OpenSSH；本版支援 macOS／Linux 終端，遠端主機也須提供 POSIX shell。無需額外 Python 套件或 jq。
+
+先下載或 clone 本 repository，進入專案目錄後執行：
+
+```sh
+mkdir -p "$HOME/.local/bin"
+install -m 755 herdr_pane.py "$HOME/.local/bin/herdr-pane"
+```
+
+確認 `~/.local/bin` 已在 PATH；若尚未設定，可先以 `~/.local/bin/herdr-pane` 執行。
+
+## 使用方式
 
 ```sh
 # 列出本機與已設定遠端的 agent，輸入編號接上
 herdr-pane
+
+# 只看清單
+herdr-pane --list
 
 # 第一次設定遠端：跟著引導完成連線
 herdr-pane --add-remote
@@ -22,7 +38,7 @@ herdr-pane --add-remote
 herdr-pane --add-remote developer@build.example.invalid
 ```
 
-選單示意（不是實際 session 資料）：
+簡化選單示意（不是實際 session 資料）：
 
 ```text
   #  主機        Agent   名稱           狀態      目錄
@@ -52,7 +68,7 @@ herdr-pane --add-remote developer@build.example.invalid
 - **第一次也有引導**：`--add-remote` 收集 SSH 位置，交由 Herdr 原生互動流程設定。
 - **局部失敗仍可用**：某台遠端離線，不影響其他可用的 agent。
 - **可攜的設定**：程式使用工具探索與連線設定，不寫死開發者的帳號、家目錄或主機位置。
-- **既有入口相容**：若保留舊啟動器，其原本的遠端範圍與選項語意應維持一致。
+- **單一正式名稱**：只提供 `herdr-pane`，不建立舊名稱的相容入口。
 
 「已設定遠端」指 Herdr 儲存且啟用的機器連線；每筆連線綁定一個遠端 session。本機預設使用呼叫端目前的 Herdr session。需要其他 session 時，必須明確切換或新增對應連線。
 
@@ -70,13 +86,15 @@ herdr-pane --add-remote developer@build.example.invalid
 
 ## Test results
 
-- 文件與流程圖的檢查結果見 [文件檢查紀錄](docs/document-review.md)。
-- 產品目前尚未實作；功能測試、多 client 實測與 staging 驗證均尚未完成。
-- [驗收清單](docs/acceptance.md) 是待執行條件，不是已通過測試的宣告。
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+測試涵蓋多來源清單、設定／終端變更、逾時、輸入清理、選單快照、連線失敗不重試與新增遠端委派。實際驗證及限制見 [驗證紀錄](docs/document-review.md)；[驗收清單](docs/acceptance.md) 區分已驗證與待驗證項目。正式 staging 尚未執行。
 
 ## New components
 
-目前新增的是操作文件、四張 SVG 流程圖及其 Mermaid 原稿。尚未新增執行檔、安裝器、CI 或伺服器設定。
+`herdr_pane.py` 是可直接安裝的單檔程式，`tests/` 使用 Python 標準 unittest；另提供四張 SVG 與 Mermaid 原稿。程式不保存另一套 profile 或憑證，沒有新增服務或 CI。
 
 ## Reference
 
@@ -87,3 +105,5 @@ herdr-pane --add-remote developer@build.example.invalid
 ## Notes
 
 這個工具提供終端連線便利性。接上 agent 後可以輸入操作；它不建立新的使用者權限，也不提供真正的唯讀存取控制。SSH 授權仍由主機擁有者管理。
+
+選號只支援這次互動選單，不接受跨次執行的 `herdr-pane 1`。清單失敗可調整 `--timeout`（每個查詢預設 10 秒）；按 `r` 刷新，按 Enter 取消。

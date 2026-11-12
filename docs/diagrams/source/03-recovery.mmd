@@ -7,7 +7,8 @@ flowchart TB
     EVENT(["連線結束或失敗"])
     KIND{"發生什麼情況？"}
     NORMAL["正常 detach\n結束本次連線"]
-    TAKEN["被其他人 takeover\n不重連、不搶回"]
+    TAKEN["被其他人 takeover\n不重連、不搶回
+必要時手動 detach"]
     TARGET["目標已結束／被占用\n不改接其他 agent"]
     NETWORK["網路或驗證問題\n顯示原因與處理方向"]
     END(["離開或返回選單\n不主動停止遠端工作"])
