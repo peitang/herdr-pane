@@ -61,6 +61,15 @@ class SelectorTests(unittest.TestCase):
         self.assertEqual([s.profile_id for s in sources], ["profile_a"])
         self.assertEqual(len(errors), 1)
 
+    def test_duplicate_profile_ids_are_all_excluded(self):
+        for first in (profile(target="first-box"), profile(enabled=False)):
+            with self.subTest(first=first):
+                sources, errors = app.parse_sources([
+                    first, profile(target="second-box"), profile(id="profile_b", label="safe-box"),
+                ])
+                self.assertEqual([item.profile_id for item in sources], ["profile_b"])
+                self.assertTrue(errors)
+
     def test_duplicate_names_and_panes_remain_bound_to_source(self):
         remote = app.parse_sources([profile()])[0][0]
         rows = app.parse_agents(payload(agent()), app.LOCAL)
@@ -155,6 +164,42 @@ class SelectorTests(unittest.TestCase):
         self.assertIn("--session review terminal attach terminal_a", command[4])
         self.assertNotIn("--takeover", command[4])
 
+    def test_remote_script_runs_through_posix_and_csh_login_shells(self):
+        source = app.parse_sources([profile()])[0][0]
+        row = app.parse_agents(payload(agent()), source)[0]
+        command = app.attach_command(row, "/tools/herdr", "/tools/ssh")[-1]
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "herdr"
+            executable.write_text(
+                "#!/bin/sh\n"
+                'test "$1" = --session && test "$2" = review || exit 2\n'
+                'if test "$3" = agent && test "$4" = list; then exit 0; fi\n'
+                'test "$3" = terminal && test "$4" = attach && test "$5" = terminal_a || exit 2\n'
+                'printf "ATTACH_OK\\n"\n'
+            )
+            executable.chmod(0o755)
+            env = dict(os.environ, PATH=directory + os.pathsep + os.environ.get("PATH", ""))
+            for shell in ("/bin/sh", "/bin/bash", "/bin/zsh", "/bin/csh", "/bin/tcsh"):
+                if not Path(shell).exists():
+                    continue
+                with self.subTest(shell=shell):
+                    result = subprocess.run([shell, "-f", "-c", command], env=env, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("ATTACH_OK", result.stdout)
+
+    def test_unicode_line_separators_cannot_split_display_rows(self):
+        self.assertEqual(app.display_text("first\u2028second\u2029third").splitlines(), ["first second third"])
+
+    def test_disabled_only_catalog_suggests_reenabling_saved_profiles(self):
+        def query(args):
+            return [profile(enabled=False)] if args[0] == "machine" else payload()
+        output = io.StringIO()
+        with patch.object(app, "find_herdr", return_value="/tools/herdr"), \
+             patch.object(app, "QueryRunner", return_value=query), \
+             patch.object(app, "caller_pids", return_value=set()), patch.object(sys, "stdout", output):
+            self.assertEqual(app.main(["--list"]), 0)
+        self.assertIn("herdr machine enable PROFILE_ID", output.getvalue())
+
     def test_native_setup_passes_target_and_explicit_session_as_arguments(self):
         calls = []
         def run(args):
@@ -189,13 +234,28 @@ class SelectorTests(unittest.TestCase):
                 "time.sleep(30)\n"
             )
             script.chmod(0o755)
-            started = time.monotonic()
+            real_popen = subprocess.Popen
+            ready_at = []
+            def start_ready(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                deadline = time.monotonic() + 10
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.01)
+                if not pid_file.exists():
+                    app.QueryRunner.stop(process)
+                    self.fail("Detached-child fixture did not become ready")
+                ready_at.append(time.monotonic())
+                return process
             try:
-                with self.assertRaises(app.PaneError) as error:
+                # Time the query after its detached-child fixture is ready;
+                # Python cold-start speed is not the behavior under test.
+                with patch.object(app.subprocess, "Popen", side_effect=start_ready), \
+                     self.assertRaises(app.PaneError) as error:
                     app.QueryRunner(str(script), 0.5)([])
-                self.assertTrue(pid_file.exists(), str(error.exception))
                 self.assertIn("逾時", str(error.exception))
-                self.assertLess(time.monotonic() - started, 2)
+                self.assertLess(time.monotonic() - ready_at[0], 2)
             finally:
                 if pid_file.exists():
                     try:
@@ -259,6 +319,25 @@ class SelectorTests(unittest.TestCase):
         row = app.parse_agents(payload(agent()), app.LOCAL)[0]
         with self.assertRaises(app.PaneError):
             app.is_own_terminal(row, lambda args: {"result": {}}, {420})
+
+    def test_malformed_process_pids_cannot_authorize_local_attach(self):
+        row = app.parse_agents(payload(agent()), app.LOCAL)[0]
+        for bad_pid in (True, False, "123", None, -1, 0):
+            for field in ("shell", "foreground"):
+                info = {"result": {"process_info": {
+                    "shell_pid": bad_pid if field == "shell" else 100,
+                    "foreground_processes": [{"pid": bad_pid if field == "foreground" else 200}],
+                }}}
+                with self.subTest(bad_pid=bad_pid, field=field), self.assertRaises(app.PaneError):
+                    app.is_own_terminal(row, lambda args: info, {123})
+
+    def test_excessively_nested_json_does_not_escape_query_error_handling(self):
+        for error_output in (False, True):
+            code = "import sys; print('[' * 100000 + '0' + ']' * 100000, file=sys.{}); sys.exit({})".format(
+                "stderr" if error_output else "stdout", 1 if error_output else 0,
+            )
+            with self.subTest(error_output=error_output), self.assertRaises(app.PaneError):
+                app.QueryRunner(sys.executable, 3)(["-c", code])
 
     def test_menu_selection_keeps_snapshot_when_live_order_changes(self):
         first = agent()
@@ -338,11 +417,14 @@ class RemoteRemovalTests(unittest.TestCase):
             if argv != ["machine", "list", "--json"]:
                 raise AssertionError("Removal must not query or connect to an agent")
             result = next(snapshots)
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 raise result
             return result
+        query.cancel = lambda: None
         def run(argv):
             calls.append(argv)
+            if isinstance(native_exit, BaseException):
+                raise native_exit
             return native_exit
         with patch.object(app, "find_herdr", return_value="/tools/herdr"), \
              patch.object(app, "QueryRunner", return_value=query), \
@@ -380,6 +462,25 @@ class RemoteRemovalTests(unittest.TestCase):
                 code, calls, _ = self.execute([[profile()]], answers)
                 self.assertEqual(code, 0)
                 self.assertEqual(calls, [])
+
+    def test_interrupt_during_or_after_native_removal_reports_unknown_state(self):
+        for snapshots, outcome in (([[profile()], [profile()]], KeyboardInterrupt()),
+                                   ([[profile()], [profile()], KeyboardInterrupt()], 0)):
+            with self.subTest(outcome=outcome):
+                code, calls, output = self.execute(snapshots, ["1", "yes"], native_exit=outcome)
+                self.assertEqual(code, 130)
+                self.assertEqual(len(calls), 1)
+                self.assertIn("herdr machine list --json", output)
+                self.assertNotIn("已取消", output)
+                self.assertNotIn("已移除連線", output)
+
+    def test_numbered_removal_list_shows_each_saved_enabled_state(self):
+        rows = [profile(label="active"), profile(id="profile_b", label="inactive", enabled=False)]
+        code, calls, output = self.execute([rows], [""])
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [])
+        self.assertIn("[啟用]", output)
+        self.assertIn("[停用]", output)
 
     def test_empty_saved_list_exits_without_mutation(self):
         code, calls, _ = self.execute([[]], [])

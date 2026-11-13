@@ -38,7 +38,7 @@ herdr machine reconnect PROFILE_ID
 
 目標已結束、terminal ID 改變、profile 被修改／停用，或無法核對身分時，工具會返回選單；刷新後重新選號。
 
-本機會檢查程序祖先，避免接上執行啟動器的同一個終端。查不到必要程序資訊時會拒絕本機 attach，不依其他視窗焦點猜測。
+本機會檢查程序祖先，避免接上執行啟動器的同一個終端。遠端也會查目標程序；若 PID 與呼叫端重疊，會在 SSH 連線中追加同機核對，只有確認是呼叫端自己時才拒絕，不把不同主機的 PID 巧合當成相同終端。查不到必要程序資訊時會拒絕 attach，不依其他視窗焦點猜測。
 
 ## 已被占用、斷線或被接管
 
@@ -76,3 +76,15 @@ herdr-pane --remove-remote PROFILE_ID  # 指定 ID 後確認
 可提供作業系統、Python／Herdr 版本、使用哪個指令，以及自行去識別化後的錯誤碼。請不要公開 token、SSH config、真實主機／帳號／目錄、完整 process-info、session 快照或終端截圖。安全邊界見 [安全說明](security.md)。
 
 原生命令依據：[Herdr 0.9.5 CLI](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.5/docs/next/website/src/content/docs/cli-reference.mdx)、[遠端與直接終端連線](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.5/docs/next/website/src/content/docs/persistence-remote.mdx)。
+
+## 中斷、終端狀態與巢狀環境
+
+選單中按 Ctrl+C 會取消；接上終端後仍以 Ctrl+B、Q detach，Ctrl+C 可能會送給目標程式。啟動器收到 SIGINT 時會先讓子程序清理，再於必要時結束它，並還原原先的終端設定。若輸入已經不顯示，可在可用的 shell 執行 `stty sane`。
+
+新增／移除的原生命令已開始執行後，中斷不表示設定一定沒改變。工具會提示用 `herdr machine list --json` 確認結果，不會宣稱操作已回復。
+
+自我辨識以直接在 Herdr pane 或一般終端執行為驗證範圍。tmux、screen、zellij，以及先透過 SSH／mosh 繞回同一台機器再執行，可能切斷程序祖先關係；本版不提供這些巢狀情境的防循環保證。請直接在 Herdr pane 執行，避免將包住呼叫端的終端接回自身。
+
+若舊版本或未支援的巢狀環境已發生自接卡住，從另一個終端以 `herdr pane process-info --pane PANE_ID` 找出剛啟動的 attach client，再以 `ps -p CLIENT_PID -o pid=,ppid=,command=` 核對，對該 client 使用 `kill -INT CLIENT_PID`，無法退出時再使用 `kill -TERM CLIENT_PID`。這裡的目標是 attach client，不是 Herdr server 或正在工作的 agent。
+
+若本機 `ps` 無法執行或祖先鏈不完整，本版連 `--list` 也會停止，避免顯示未能排除自身的清單。遠端程序 ID 恰與呼叫端相交時，遠端必須能執行本機選定的 `/bin/ps` 或 `/usr/bin/ps`；路徑不存在、無法查詢或 PID 超過遠端平台範圍，都會拒絕本次連線。Linux 與不同作業系統間的這些組合尚未實測。

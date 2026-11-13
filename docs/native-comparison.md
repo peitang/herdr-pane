@@ -2,7 +2,7 @@
 
 `herdr-pane` 是第三方操作捷徑。Herdr 本身已經提供多機連線、跨機 agent 總覽、session 持續執行與單一終端 attach。本工具沒有實作新的遠端存取協定、使用者授權或共享 server。
 
-本比較以 Herdr 0.9.5 官方文件與 `herdr-pane` 0.2.0 的實作為準。
+本比較以 Herdr 0.9.5 官方文件與 `herdr-pane` 0.2.1 的實作為準。
 
 ## 哪些原本就有
 

@@ -3,17 +3,20 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import unicodedata
 from urllib.parse import urlsplit
@@ -58,7 +61,8 @@ ANSI_ESCAPE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[
 def display_text(value):
     """Render untrusted labels as one line, without terminal/bidi controls."""
     text = ANSI_ESCAPE.sub("", str(value or ""))
-    return "".join(" " if unicodedata.category(c).startswith("C") else c for c in text)
+    return "".join(" " if unicodedata.category(c).startswith("C") or
+                   unicodedata.category(c) in {"Zl", "Zp"} else c for c in text)
 
 
 def validate_identifier(value):
@@ -100,7 +104,12 @@ def validate_target(value):
 def parse_sources(data):
     if not isinstance(data, list):
         raise PaneError("機器清單不是預期的 JSON 陣列")
-    sources, errors, seen = [], [], set()
+    id_counts = {}
+    for profile in data:
+        if isinstance(profile, dict) and isinstance(profile.get("id"), str):
+            profile_id = profile["id"]
+            id_counts[profile_id] = id_counts.get(profile_id, 0) + 1
+    sources, errors = [], []
     for index, profile in enumerate(data, 1):
         try:
             if not isinstance(profile, dict) or not isinstance(profile.get("enabled"), bool):
@@ -108,9 +117,8 @@ def parse_sources(data):
             if not profile["enabled"]:
                 continue
             profile_id = validate_identifier(profile.get("id"))
-            if profile_id in seen:
+            if id_counts[profile_id] > 1:
                 raise PaneError("重複的機器識別碼")
-            seen.add(profile_id)
             sources.append(Source(
                 profile_id, str(profile.get("label") or profile_id),
                 validate_target(profile.get("target")),
@@ -192,7 +200,7 @@ class QueryRunner:
             error_file.seek(0)
             code = json.loads(error_file.read(65536))["error"]["code"]
             return code if isinstance(code, str) and code in known else ""
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, RecursionError):
             return ""
 
     def cancel(self):
@@ -235,7 +243,7 @@ class QueryRunner:
                     raise PaneError("Herdr 回應超過允許大小")
                 try:
                     return json.loads(output)
-                except (ValueError, UnicodeError):
+                except (ValueError, UnicodeError, RecursionError):
                     raise PaneError("Herdr 沒有回傳有效 JSON") from None
             finally:
                 with self.lock:
@@ -287,36 +295,52 @@ def caller_pids():
     ancestors = {os.getpid()}
     try:
         output = subprocess.check_output(
-            ["ps", "-ax", "-o", "pid=,ppid="], text=True, timeout=2,
+            ["ps", "-A", "-o", "pid=,ppid="], text=True, timeout=2,
         )
         parents = {}
         for line in output.splitlines():
             pid, parent = line.split()
             parents[int(pid)] = int(parent)
         pid = os.getpid()
-        while parents.get(pid, 0) > 1 and parents[pid] not in ancestors:
-            pid = parents[pid]
-            ancestors.add(pid)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        # Foreground process membership can still positively identify this PID.
-        pass
+        if pid not in parents:
+            raise ValueError()
+        while parents[pid] > 1:
+            parent = parents[pid]
+            if parent in ancestors or parent not in parents:
+                raise ValueError()
+            ancestors.add(parent)
+            pid = parent
+        if parents[pid] < 0:
+            raise ValueError()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise PaneError("無法核對呼叫端的程序祖先，請確認 ps 可執行後重試") from error
     return ancestors
 
 
 def is_own_terminal(row, query, ancestors):
-    if row.source.profile_id or not ancestors:
+    if row.source.profile_id:
+        return False
+    return has_caller_process(row, query, ancestors)
+
+
+def has_caller_process(row, query, ancestors):
+    """PID overlap is only a candidate match until the host is also verified."""
+    if not ancestors:
         return False
     try:
-        info = query(["pane", "process-info", "--pane", row.pane_id])["result"]["process_info"]
+        info = query(row.source.prefix() + ["pane", "process-info", "--pane", row.pane_id])["result"]["process_info"]
         shell_pid = info["shell_pid"]
         processes = info["foreground_processes"]
-        if not isinstance(shell_pid, int) or shell_pid <= 0 or not isinstance(processes, list):
+        if type(shell_pid) is not int or shell_pid <= 0 or not isinstance(processes, list):
+            raise ValueError()
+        if any(not isinstance(process, dict) or type(process.get("pid")) is not int or
+               process["pid"] <= 0 for process in processes):
             raise ValueError()
         pids = {shell_pid}
         pids.update(process["pid"] for process in processes)
         return bool(pids & ancestors)
     except (KeyError, TypeError, ValueError):
-        raise PaneError("無法核對本機終端的程序身分；請刷新後重試") from None
+        raise PaneError("無法核對終端的程序身分；請刷新後重試") from None
 
 
 def exclude_own_terminal(rows, query, ancestors):
@@ -340,7 +364,38 @@ def exclude_own_terminal(rows, query, ancestors):
     return [row for row, keep_row in zip(rows, retained) if keep_row]
 
 
-def attach_command(row, herdr, ssh):
+@contextmanager
+def loopback_guard():
+    """Hold a disposable, nonce-marked process during an ambiguous SSH attach."""
+    marker = "herdr-pane-probe-" + secrets.token_hex(16)
+    process = subprocess.Popen(
+        ["/bin/sh", "-c", "read -r herdr_pane_probe", marker],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        ps = next((path for path in ("/bin/ps", "/usr/bin/ps") if os.access(path, os.X_OK)), None)
+        if ps is None:
+            raise PaneError("找不到可用的 ps，無法核對遠端是否指回自己的終端")
+        try:
+            command = subprocess.check_output(
+                [ps, "-ww", "-p", str(process.pid), "-o", "command="], text=True, timeout=2,
+            ).rstrip("\n")
+        except (OSError, subprocess.SubprocessError) as error:
+            raise PaneError("無法建立同機核對，已停止本次連線") from error
+        if process.poll() is not None or not command.endswith(marker):
+            raise PaneError("同機核對程序無法驗證，已停止本次連線")
+        yield process.pid, marker, ps
+    finally:
+        process.stdin.close()
+        try:
+            process.wait(timeout=1)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            process.kill()
+            process.wait(timeout=1)
+
+
+def attach_command(row, herdr, ssh, guard=None):
     validate_identifier(row.terminal_id)
     if not row.source.profile_id:
         return [herdr, "terminal", "attach", row.terminal_id]
@@ -349,21 +404,33 @@ def attach_command(row, herdr, ssh):
     # This fixed POSIX script is interpreted remotely; no user value is code.
     # Unlike `herdr --remote`, terminal attach never prepares/restarts a server.
     script = (
-        'herdr_bin=$(command -v herdr 2>/dev/null)\n'
-        'if [ -z "$herdr_bin" ]; then\n'
+        'herdr_bin=$(command -v herdr 2>/dev/null); '
+        'if [ -z "$herdr_bin" ]; then '
         '    for candidate in "$HOME/.local/bin/herdr" /opt/homebrew/bin/herdr '
-        '/usr/local/bin/herdr "$HOME/.nix-profile/bin/herdr"; do\n'
-        '        if [ -x "$candidate" ]; then herdr_bin=$candidate; break; fi\n'
-        '    done\n'
-        'fi\n'
-        'if [ -z "$herdr_bin" ]; then printf "%s\\n" "herdr-pane: remote Herdr not found" >&2; exit 127; fi\n'
-        'unset HERDR_SOCKET_PATH HERDR_SESSION HERDR_ENV HERDR_PANE_ID\n'
+        '/usr/local/bin/herdr "$HOME/.nix-profile/bin/herdr"; do '
+        '        if [ -x "$candidate" ]; then herdr_bin=$candidate; break; fi; '
+        '    done; '
+        'fi; '
+        'if [ -z "$herdr_bin" ]; then printf "%s\\n" "herdr-pane: remote Herdr not found" >&2; exit 127; fi; '
+        'unset HERDR_SOCKET_PATH HERDR_SESSION HERDR_ENV HERDR_PANE_ID; '
         '"$herdr_bin" ' + shlex.join(["--session", row.source.session, "agent", "list"]) +
-        ' >/dev/null || exit 1\n'
+        ' >/dev/null || exit 1; '
         'exec "$herdr_bin" ' + shlex.join([
             "--session", row.source.session, "terminal", "attach", row.terminal_id,
         ])
     )
+    if guard is not None:
+        pid, marker, ps = guard
+        probe = (
+            'probe_command=$(' + shlex.join([ps, "-ww", "-p", str(pid), "-o", "command="]) + ' 2>&1); '
+            'probe_status=$?; '
+            'if [ "$probe_status" -eq 0 ]; then '
+            'case "$probe_command" in *' + shlex.quote(marker) + ') '
+            'printf "%s\\n" "herdr-pane: cannot attach to the calling terminal" >&2; exit 1;; esac; '
+            'elif [ "$probe_status" -ne 1 ] || [ -n "$probe_command" ]; then '
+            'printf "%s\\n" "herdr-pane: unable to verify same-host safety" >&2; exit 1; fi; '
+        )
+        script = probe + script
     return [ssh, "-t", "--", row.source.target, "sh -c " + shlex.quote(script)]
 
 
@@ -392,6 +459,15 @@ def saved_profiles(query):
     return sorted(profiles, key=lambda item: (str(item["label"] or ""), item["id"]))
 
 
+def profile_summary(profile):
+    enabled = profile["enabled"]
+    state = "啟用" if enabled is True else "停用" if enabled is False else "未知"
+    return "{} | {} | {} / {} [{}]".format(
+        profile["id"], display_text(profile["label"]), display_text(profile["target"]),
+        display_text(profile["session"]), state,
+    )
+
+
 def remove_remote(profile_id, herdr, query, run):
     if profile_id:
         validate_identifier(profile_id)
@@ -406,10 +482,7 @@ def remove_remote(profile_id, herdr, query, run):
             return 0
         print("\n可移除的遠端連線（包含已停用）：")
         for index, item in enumerate(profiles, 1):
-            print("{:>3}  {}  |  {}  |  {} / {}".format(
-                index, item["id"], display_text(item["label"]),
-                display_text(item["target"]), display_text(item["session"]),
-            ))
+            print("{:>3}  {}".format(index, profile_summary(item)))
         while True:
             try:
                 index = selection_index(input("選擇要移除的編號，Enter 取消："), len(profiles))
@@ -419,11 +492,7 @@ def remove_remote(profile_id, herdr, query, run):
         if index is None:
             return 0
         selected = profiles[index]
-    state = "啟用" if selected["enabled"] is True else "停用" if selected["enabled"] is False else "未知"
-    print("\n移除 {} | {} | {} / {} [{}]".format(
-        selected["id"], display_text(selected["label"]), display_text(selected["target"]),
-        display_text(selected["session"]), state,
-    ))
+    print("\n移除 " + profile_summary(selected))
     print("只移除本機儲存的連線；本機 Herdr client 會與它斷線，遠端 session／agent 繼續執行。")
     print("之後需重新新增連線；暫時停用可用 herdr machine disable " + selected["id"])
     if input("確認移除？輸入 yes 確認，Enter 取消：").strip().lower() != "yes":
@@ -431,17 +500,22 @@ def remove_remote(profile_id, herdr, query, run):
         return 0
     if selected not in saved_profiles(query):
         raise PaneError("遠端設定已變更或刪除，請重新執行 --remove-remote 核對")
-    result = run([herdr, "machine", "remove", selected["id"]])
-    if result:
-        raise PaneError("移除命令失敗（exit {}）；請檢查原生訊息".format(result))
     try:
-        remaining = saved_profiles(query)
-    except PaneError as error:
-        raise PaneError("移除命令已執行，但無法確認結果；請用 herdr machine list --json 檢查") from error
-    if any(item["id"] == selected["id"] for item in remaining):
-        raise PaneError("移除後仍有此 PROFILE_ID；請用 herdr machine list --json 檢查")
-    print("已移除連線 " + selected["id"] + "；遠端 session／agent 不受影響。")
-    return 0
+        result = run([herdr, "machine", "remove", selected["id"]])
+        if result:
+            raise PaneError("移除命令失敗（exit {}）；請用 herdr machine list --json 確認結果".format(result))
+        try:
+            remaining = saved_profiles(query)
+        except PaneError as error:
+            raise PaneError("移除命令已執行，但無法確認結果；請用 herdr machine list --json 檢查") from error
+        if any(item["id"] == selected["id"] for item in remaining):
+            raise PaneError("移除後仍有此 PROFILE_ID；請用 herdr machine list --json 檢查")
+        print("已移除連線 " + selected["id"] + "；遠端 session／agent 不受影響。")
+        return 0
+    except KeyboardInterrupt:
+        query.cancel()
+        print("\n移除流程已中斷，結果未確認；請用 herdr machine list --json 檢查。", file=sys.stderr)
+        return 130
 
 
 def selection_index(text, count):
@@ -466,7 +540,9 @@ def print_inventory(rows, errors, remote_count):
     for error in errors:
         print("! " + display_text(error))
     if not remote_count:
-        print("\n新增遠端：herdr-pane --add-remote [SSH_TARGET]")
+        print("\n遠端設定：herdr machine list --json")
+        print("啟用已停用的連線：herdr machine enable PROFILE_ID")
+        print("第一次設定遠端：herdr-pane --add-remote [SSH_TARGET]")
 
 
 def find_herdr():
@@ -480,10 +556,47 @@ def find_herdr():
 
 
 def interactive_run(args):
-    return subprocess.call(args)
+    terminal_fd, terminal_state = None, None
+    try:
+        terminal_fd = sys.stdin.fileno()
+        if os.isatty(terminal_fd):
+            terminal_state = termios.tcgetattr(terminal_fd)
+    except (OSError, ValueError, termios.error):
+        pass
+    try:
+        process = subprocess.Popen(args)
+        try:
+            return process.wait()
+        except KeyboardInterrupt:
+            # A terminal SIGINT normally reaches both processes. Let the child
+            # restore its terminal and finish cleanup before sending more signals.
+            for child_signal, timeout in ((None, 2), (signal.SIGINT, 2),
+                                          (signal.SIGTERM, 1), (signal.SIGKILL, 1)):
+                if process.poll() is not None:
+                    break
+                try:
+                    if child_signal is not None:
+                        process.send_signal(child_signal)
+                    process.wait(timeout=timeout)
+                    break
+                except (subprocess.TimeoutExpired, ProcessLookupError, KeyboardInterrupt):
+                    continue
+            raise
+    finally:
+        if terminal_state is not None:
+            try:
+                termios.tcsetattr(terminal_fd, termios.TCSANOW, terminal_state)
+            except (OSError, termios.error):
+                pass
 
 
 def main(argv=None):
+    # Invalid input remains invalid selection/target text, rather than crashing
+    # input(). Keep the locale's encoding while making diagnostics printable.
+    for stream, errors in ((sys.stdin, "replace"), (sys.stdout, "backslashreplace"),
+                           (sys.stderr, "backslashreplace")):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors=errors)
     parser = argparse.ArgumentParser(
         prog="herdr-pane", description="列出本機與已設定遠端的 agent，選號接上原終端。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -500,12 +613,17 @@ def main(argv=None):
     modes.add_argument("--remove-remote", nargs="?", const="", metavar="PROFILE_ID", help="選號或指定 ID，確認後移除儲存的遠端連線")
     parser.add_argument("--remote-session", help="新增遠端時明確指定 session；未提供時詢問")
     parser.add_argument("--timeout", type=float, default=10, help="每個查詢的期限秒數（預設 10）")
-    parser.add_argument("--version", action="version", version="herdr-pane 0.2.0")
+    parser.add_argument("--version", action="version", version="herdr-pane 0.2.1")
     args = parser.parse_args(argv)
     if not 0.1 <= args.timeout <= 120:
         parser.error("--timeout 必須介於 0.1 與 120 秒")
     if args.remote_session is not None and args.add_remote is None:
         parser.error("--remote-session 必須配合 --add-remote")
+    if args.remote_session is not None:
+        try:
+            validate_session(args.remote_session)
+        except PaneError as error:
+            parser.error(str(error))
     query = None
     try:
         herdr = find_herdr()
@@ -523,7 +641,12 @@ def main(argv=None):
             validate_session(session)
             print("接下來使用 Herdr 原生設定；請自行確認 SSH 身分與安裝／更新提示。")
             print("不存在的 session 會被建立並啟動；請確認名稱，已有的 session 也可能啟動背景 server。")
-            if add_remote(target, session, herdr, interactive_run):
+            try:
+                setup_result = add_remote(target, session, herdr, interactive_run)
+            except KeyboardInterrupt:
+                print("\n新增流程已中斷；請用 herdr machine list --json 確認儲存結果。", file=sys.stderr)
+                return 130
+            if setup_result:
                 print("遠端設定未完成；返回既有清單。")
         query = QueryRunner(herdr, args.timeout)
         ancestors = caller_pids()
@@ -549,7 +672,9 @@ def main(argv=None):
                 row = rows[index]
                 try:
                     revalidate(row, query)
-                    if is_own_terminal(row, query, ancestors):
+                    current_ancestors = caller_pids()
+                    caller_match = has_caller_process(row, query, current_ancestors)
+                    if not row.source.profile_id and caller_match:
                         raise PaneError("不能接上正在執行 herdr-pane 的終端，請選其他 agent")
                     ssh = shutil.which("ssh") if row.source.profile_id else ""
                     if row.source.profile_id and not ssh:
@@ -557,7 +682,11 @@ def main(argv=None):
                     print("接上 {} / {} / {}。Ctrl+B 後按 Q 離開；巢狀 Herdr 可能需先傳送內層前綴。".format(
                         display_text(row.source.label), display_text(row.source.session), display_text(row.name),
                     ), flush=True)
-                    result = interactive_run(attach_command(row, herdr, ssh))
+                    if row.source.profile_id and caller_match:
+                        with loopback_guard() as guard:
+                            result = interactive_run(attach_command(row, herdr, ssh, guard))
+                    else:
+                        result = interactive_run(attach_command(row, herdr, ssh))
                     if result == 0:
                         return 0
                     print("連線已結束（exit {}）。請確認上述 Herdr／SSH 訊息後重新選號；不自動重連或接管。".format(result))

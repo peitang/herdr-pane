@@ -6,7 +6,7 @@
 
 **Herdr 本身已有跨機 agent 清單、遠端連線與 session 共享。** 本工具補的是「在目前 pane 選號、直接接上單一 agent」的操作流程，沒有新增 SSH 權限或多人協作協定；也不是 Herdr 官方專案。
 
-> **版本：0.2.0，供試用。** 程式可執行，40 項自動測試通過，已在 macOS 驗證本機／遠端清單與 SSH attach／detach。Linux、正式 staging、新帳號與 MFA 全流程尚未實測。
+> **版本：0.2.1，供試用。** 程式可執行，67 項自動測試通過，已在 macOS 驗證本機／遠端清單與 SSH attach／detach。Linux、正式 staging、新帳號與 MFA 全流程尚未實測。
 
 ![herdr-pane 操作總覽：收集 agent、選號、接上原終端](docs/diagrams/svg/00-overview.svg)
 
@@ -119,7 +119,7 @@ herdr machine remove PROFILE_ID   # 移除這筆儲存的連線
 
 ## Detail items
 
-清單查詢並行處理，單一來源失敗不取消其他結果。選號後重新核對 profile、session、pane 與 terminal ID，拒絕失效目標。本機以程序關係核對呼叫端，避免接到自己；不依賴其他 client 的焦點。
+清單查詢並行處理，單一來源失敗不取消其他結果。選號後重新核對 profile、session、pane 與 terminal ID，拒絕失效目標。本機以程序關係核對呼叫端，避免接到自己；遠端若有程序 ID 重疊，會在同次 SSH 連線核對是否繞回本機後才接上，不依賴其他 client 的焦點。無法核對程序身分時會拒絕本次連線。
 
 ## Related functions
 
@@ -131,11 +131,11 @@ herdr machine remove PROFILE_ID   # 移除這筆儲存的連線
 python3 -m unittest discover -s tests -v
 ```
 
-40 項測試涵蓋多來源清單、設定／目標變更、逾時與取消、參數及顯示文字處理、選單快照、新增遠端委派，以及移除確認／取消、設定變更與結果核對。SSH 連線與正常 detach 另以隔離終端實測。完整範圍與未測項目見 [驗證紀錄](docs/document-review.md)。
+67 項測試涵蓋多來源清單、設定／目標變更、逾時與取消、參數及顯示文字處理、選單快照、新增遠端委派，以及移除確認／取消、設定變更與結果核對。SSH 連線與正常 detach 另以隔離終端實測。完整範圍與未測項目見 [驗證紀錄](docs/document-review.md)。
 
 ## New components
 
-單一可安裝程式 `herdr_pane.py`、標準 unittest 測試、操作文件與四張 SVG／Mermaid 流程圖。沒有新增背景服務或自動化部署。
+單一可安裝程式 `herdr_pane.py`、標準 unittest 測試、操作文件與四張 SVG／Mermaid 流程圖。沒有新增常駐服務或自動化部署；只在遠端可能自接時建立短暫核對程序，連線結束或取消後回收。
 
 ## Reference
 
